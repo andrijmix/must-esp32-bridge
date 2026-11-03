@@ -18,6 +18,15 @@ const SOC_CURVE = [
   [26.2, 40], [26.4, 70], [26.6, 90], [26.8, 99], [27.2, 100],
 ];
 
+// --- Резерв при відключенні мережі ------------------------------------------
+// Скільки енергії можна взяти з АКБ і на скільки годин її вистачить при
+// поточному навантаженні. Це оцінка, а не гарантія: прив'язана до оцінки SOC
+// (вона пласка, ±10–15 %), ККД і власні втрати інвертора — припущення.
+const BATT_NOMINAL_V = 25.6;   // LiFePO4 8S; ємність у А·год беремо з налаштувань інвертора
+const INVERTER_EFF = 0.9;      // ККД перетворення АКБ → 230 В (припущення)
+const INVERTER_IDLE_W = 30;    // власне споживання інвертора від АКБ (припущення)
+const FLOOR_SOC_DEFAULT = 10;  // якщо поріг зупинки розряду невідомий
+
 const LABELS = {
   AbsorbVoltage: "Напруга абсорбції (поточна)", FloatVoltage: "Напруга підтримки (Float)",
   AbsorptionVoltage: "Напруга абсорбції (Bulk)", BatteryLowVoltage: "Нижній поріг напруги АКБ",
@@ -191,6 +200,26 @@ function derive() {
   return d;
 }
 
+// Корисна енергія до порогу зупинки розряду інвертора і час роботи при поточному
+// навантаженні. null, якщо не вистачає даних.
+function reserveEstimate(d) {
+  if (d.soc == null || d.load_w == null) return null;
+  const ah = val("BatteryAh") || 200;
+  const totalKwh = (ah * BATT_NOMINAL_V) / 1000;
+  const floorV = val("BatteryStopDischargingVoltage");
+  const floorSoc = floorV != null ? estimateSoc(floorV) : FLOOR_SOC_DEFAULT;
+  const usableKwh = Math.max(0, ((d.soc - floorSoc) / 100) * totalKwh);
+  const drawW = d.load_w / INVERTER_EFF + INVERTER_IDLE_W;
+  return { totalKwh, usableKwh, floorV, drawW, hours: (usableKwh * 1000) / drawW };
+}
+
+function fmtHours(h) {
+  if (h == null || !Number.isFinite(h)) return "—";
+  if (h > 48) return "> 48 год";
+  const m = Math.round((h - Math.floor(h)) * 60);
+  return `≈ ${Math.floor(h)} год${m ? " " + m + " хв" : ""}`;
+}
+
 function socColor(v) {
   if (v == null) return "var(--muted)";
   if (v >= 60) return "var(--battery)";
@@ -291,8 +320,10 @@ function updateOverview() {
   $("soc-fill").style.width = soc == null ? "0%" : `${Math.max(0, Math.min(soc, 100))}%`;
   $("soc-fill").style.background = socColor(soc);
   $("batt-v-value").textContent = withUnit(d.batt_v, "В", 1);
+  const rsv = reserveEstimate(d);
   $("hero-meta").textContent =
     `Струм: ${withUnit(d.batt_i, "А", 0)} · потужність: ${signedW(d.batt_w)}\n` +
+    (rsv ? `Резерв без мережі: ${fmtHours(rsv.hours)} при ${num(d.load_w, 0)} Вт\n` : "") +
     `Пороги: стоп-заряд ${fmtReg("BatteryStopChargingVoltage")}, стоп-розряд ${fmtReg("BatteryStopDischargingVoltage")}`;
   $("state-badge").textContent = stateText(d);
 
@@ -320,6 +351,15 @@ function updateBattery() {
     ["Ємність", fmtReg("BatteryAh"), "var(--info)", "з налаштувань інвертора"],
     ["Стан", mode, "var(--accent)", "визначено за потоком"],
   ];
+  const rsv = reserveEstimate(d);
+  if (rsv) {
+    cards.push(
+      ["Корисна енергія", `${num(rsv.usableKwh, 1)} кВт·год`, "var(--battery)",
+        `з ${num(rsv.totalKwh, 2)} кВт·год всього, до ${num(rsv.floorV, 1)} В`],
+      ["Резерв без мережі", rsv.hours > 48 ? "> 48 год" : `≈ ${num(rsv.hours, 1)} год`, "var(--solar)",
+        `при ${num(d.load_w, 0)} Вт (з втратами інвертора ≈ ${num(rsv.drawW, 0)} Вт)`],
+    );
+  }
   $("bms-cards").innerHTML = cards.map(([t, v, c, s]) => metricCard(t, v, c, s)).join("");
   renderTable("table-battery", TABLE_GROUPS.battery);
 }
