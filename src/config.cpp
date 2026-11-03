@@ -132,6 +132,17 @@ String configToJson() {
   doc["flash_history"]["enabled"] = g_config.flash_history_enabled;
   doc["flash_history"]["interval_min"] = g_config.flash_history_interval_min;
 
+  doc["telegram"]["enabled"] = g_config.tg_enabled;
+  doc["telegram"]["token"] = g_config.tg_token;
+  doc["telegram"]["chat_id"] = g_config.tg_chat_id;
+  doc["telegram"]["alert_grid"] = g_config.tg_alert_grid;
+  doc["telegram"]["alert_battery"] = g_config.tg_alert_battery;
+  doc["telegram"]["batt_low_v"] = g_config.tg_batt_low_v;
+  doc["telegram"]["alert_temp"] = g_config.tg_alert_temp;
+  doc["telegram"]["temp_limit_c"] = g_config.tg_temp_limit_c;
+  doc["telegram"]["alert_modbus"] = g_config.tg_alert_modbus;
+  doc["telegram"]["modbus_minutes"] = g_config.tg_modbus_minutes;
+
   doc["ota"]["password"] = g_config.ota_password;
   doc["web"]["username"] = g_config.web_username;
   doc["web"]["password"] = g_config.web_password;
@@ -220,6 +231,17 @@ bool configFromJson(const String &json, String &errorOut) {
   c.history_hours = doc["history"]["hours"] | 24.0f;
   c.flash_history_enabled = doc["flash_history"]["enabled"] | false;
   c.flash_history_interval_min = doc["flash_history"]["interval_min"] | 5;
+
+  c.tg_enabled = doc["telegram"]["enabled"] | false;
+  c.tg_token = (const char*)(doc["telegram"]["token"] | "");
+  c.tg_chat_id = (const char*)(doc["telegram"]["chat_id"] | "");
+  c.tg_alert_grid = doc["telegram"]["alert_grid"] | true;
+  c.tg_alert_battery = doc["telegram"]["alert_battery"] | true;
+  c.tg_batt_low_v = doc["telegram"]["batt_low_v"] | 25.5f;
+  c.tg_alert_temp = doc["telegram"]["alert_temp"] | true;
+  c.tg_temp_limit_c = doc["telegram"]["temp_limit_c"] | 80.0f;
+  c.tg_alert_modbus = doc["telegram"]["alert_modbus"] | true;
+  c.tg_modbus_minutes = doc["telegram"]["modbus_minutes"] | 3;
 
   c.ota_password = doc["ota"]["password"] | "";
   c.web_username = (const char*)(doc["web"]["username"] | "admin");

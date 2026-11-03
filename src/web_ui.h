@@ -56,6 +56,7 @@ static const char INDEX_HTML[] PROGMEM = R"HTML(
 <header>
   <h1>MUST PV18-3024 VPM II &rarr; MQTT <span id="fw_version" style="color:var(--muted);font-weight:400;font-size:12px;"></span></h1>
   <div class="right">
+    <a class="link" href="/dash">Dashboard &rarr;</a>
     <a class="link" href="/update" data-i18n="link_ota">Firmware (OTA) &rarr;</a>
     <button id="lang_toggle" onclick="toggleLang()">RU</button>
   </div>
@@ -126,6 +127,31 @@ static const char INDEX_HTML[] PROGMEM = R"HTML(
       (e.g. a device at a remote site, broker reachable via a public IP) --
       otherwise the MQTT username/password travel in plain text the whole way.
       Without TLS, only use this on a local/trusted network.</p>
+  </div>
+
+  <div class="card">
+    <h2>Telegram</h2>
+    <label><input id="tg_enabled" type="checkbox" style="width:auto;display:inline-block;margin-right:6px;">Сповіщення в Telegram / Telegram alerts</label>
+    <div class="row">
+      <div><label>Токен бота (від @BotFather)</label><input id="tg_token" type="password" autocomplete="off" placeholder="123456789:AA..."></div>
+      <div><label>Chat ID</label><input id="tg_chat_id" type="text" placeholder="123456789"></div>
+    </div>
+    <label><input id="tg_alert_grid" type="checkbox" style="width:auto;display:inline-block;margin-right:6px;">Мережа зникла / повернулась</label>
+    <br>
+    <label><input id="tg_alert_battery" type="checkbox" style="width:auto;display:inline-block;margin-right:6px;">Низька напруга АКБ</label>
+    <div class="row">
+      <div><label>Поріг АКБ, В</label><input id="tg_batt_low_v" type="number" step="0.1" value="25.5"></div>
+      <div><label>Поріг температури, °C</label><input id="tg_temp_limit_c" type="number" step="1" value="80"></div>
+    </div>
+    <label><input id="tg_alert_temp" type="checkbox" style="width:auto;display:inline-block;margin-right:6px;">Перегрів (трансформатор / радіатор AC)</label>
+    <br>
+    <label><input id="tg_alert_modbus" type="checkbox" style="width:auto;display:inline-block;margin-right:6px;">Немає зв'язку з інвертором довше, хв:</label>
+    <input id="tg_modbus_minutes" type="number" min="1" value="3" style="width:80px;">
+    <p class="hint">Бот відповідає на команду /status лише в чаті з вказаним Chat ID. Токен — секрет, нікому його не показуйте.
+      Щоб дізнатись свій Chat ID, напишіть боту @userinfobot. Спочатку збережіть налаштування (плата перезавантажиться),
+      потім натисніть «Тест».</p>
+    <button type="button" onclick="testTelegram()" style="margin-top:6px;">Тест / Test</button>
+    <span id="tg_status" class="hint" style="margin-left:8px;"></span>
   </div>
 
   <div class="card">
@@ -544,6 +570,17 @@ async function loadConfig() {
   mqtt_topic_prefix.value = c.mqtt.topic_prefix || '';
   mqtt_ha_discovery.checked = !!c.mqtt.ha_discovery;
   mqtt_tls.checked = !!c.mqtt.tls;
+  const tg = c.telegram || {};
+  tg_enabled.checked = !!tg.enabled;
+  tg_token.value = tg.token || '';
+  tg_chat_id.value = tg.chat_id || '';
+  tg_alert_grid.checked = tg.alert_grid !== false;
+  tg_alert_battery.checked = tg.alert_battery !== false;
+  tg_batt_low_v.value = tg.batt_low_v || 25.5;
+  tg_alert_temp.checked = tg.alert_temp !== false;
+  tg_temp_limit_c.value = tg.temp_limit_c || 80;
+  tg_alert_modbus.checked = tg.alert_modbus !== false;
+  tg_modbus_minutes.value = tg.modbus_minutes || 3;
   mb_slave.value = c.modbus.slave_id;
   mb_baud.value = c.modbus.uart_baud;
   mb_interval.value = c.modbus.poll_interval_ms;
@@ -606,6 +643,18 @@ async function saveConfig() {
       client_id: mqtt_client_id.value, topic_prefix: mqtt_topic_prefix.value,
       ha_discovery: mqtt_ha_discovery.checked, tls: mqtt_tls.checked
     },
+    telegram: {
+      enabled: tg_enabled.checked,
+      token: tg_token.value.trim(),
+      chat_id: tg_chat_id.value.trim(),
+      alert_grid: tg_alert_grid.checked,
+      alert_battery: tg_alert_battery.checked,
+      batt_low_v: parseFloat(tg_batt_low_v.value) || 25.5,
+      alert_temp: tg_alert_temp.checked,
+      temp_limit_c: parseFloat(tg_temp_limit_c.value) || 80,
+      alert_modbus: tg_alert_modbus.checked,
+      modbus_minutes: parseInt(tg_modbus_minutes.value) || 3
+    },
     ota: { password: ota_password.value },
     web: { username: web_username.value, password: web_password.value },
     history: {
@@ -650,6 +699,30 @@ async function saveConfig() {
   } else {
     const t = await r.text();
     setStatus(I18N[currentLang].status_save_error + t, 'err');
+  }
+}
+
+// Тестове повідомлення в Telegram: ставить його в чергу, потім кілька секунд
+// чекає результат відправки у /api/status (telegram_state / telegram_error).
+async function testTelegram() {
+  const out = document.getElementById('tg_status');
+  out.textContent = '...';
+  try {
+    const r = await fetch('/api/telegram/test', { method: 'POST' });
+    const t = await r.text();
+    if (!r.ok) { out.textContent = t; return; }
+    for (let i = 0; i < 6; i++) {
+      await new Promise(res => setTimeout(res, 2000));
+      const s = await (await fetch('/api/status')).json();
+      if (s.telegram_state === 'ok') { out.textContent = 'OK — перевірте Telegram'; return; }
+      if (s.telegram_state !== 'off' && s.telegram_state !== 'no_wifi' && s.telegram_state !== 'no_time') {
+        out.textContent = s.telegram_state + (s.telegram_error ? ': ' + s.telegram_error : '');
+        if (s.telegram_state !== 'ok') return;
+      }
+    }
+    out.textContent = 'Повідомлення в черзі, перевірте Telegram';
+  } catch (e) {
+    out.textContent = e.message;
   }
 }
 

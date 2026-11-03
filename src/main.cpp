@@ -8,6 +8,7 @@
 #include "modbus_transport.h"
 #include "modbus_poll.h"
 #include "mqtt_handler.h"
+#include "telegram.h"
 #include "status_led.h"
 #include "history.h"
 #include "history_flash.h"
@@ -76,6 +77,7 @@ void setup() {
   webServerSetup();     // включает и логи (SSE), и ElegantOTA, и конфиг-API
   modbusTaskStart();
   mqttTaskStart();
+  telegramTaskStart();
   historySetup();
   historyFlashSetup();
   tempHumiditySetup();
@@ -183,6 +185,7 @@ static void processModbusData(const String &name, float value, const String &uni
     logPrintln(String(msg));
 
     mqttPublishValue(name, value, unit);
+    telegramOnValue(name, value);
     historyPush(name, value);
     historyFlashPush(name, value);
 
@@ -212,5 +215,6 @@ void loop() {
 
     historyFlashLoop();
     tempHumidityLoop();
+    telegramLoop();
 }
 

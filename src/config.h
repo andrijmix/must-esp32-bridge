@@ -92,6 +92,21 @@ struct AppConfig {
   bool flash_history_enabled = false; // выключено по умолчанию -- осознанный выбор, не всем нужно
   int flash_history_interval_min = 5;
 
+  // ---- Telegram-уведомления (см. telegram.cpp) ----
+  // Выключено по умолчанию. Токен бота -- секрет, вводится в веб-конфиге
+  // (@BotFather). chat_id -- числовой id чата/пользователя, которому слать
+  // уведомления; на команды отвечаем ТОЛЬКО этому чату, остальных игнорируем.
+  bool tg_enabled = false;
+  String tg_token = "";
+  String tg_chat_id = "";
+  bool tg_alert_grid = true;          // пропала / вернулась сеть
+  bool tg_alert_battery = true;       // напряжение АКБ ниже порога
+  float tg_batt_low_v = 25.5f;        // В; повторное "норма" -- при +0.5 В выше (гистерезис)
+  bool tg_alert_temp = true;          // перегрев трансформатора
+  float tg_temp_limit_c = 80.0f;      // °C; "норма" -- при 5 °C ниже
+  bool tg_alert_modbus = true;        // нет связи с инвертором дольше N минут
+  int tg_modbus_minutes = 3;
+
   // ---- OTA / веб-доступ ----
   String ota_password = "";           // если пусто -- без пароля (не рекомендуется в проде)
 

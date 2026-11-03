@@ -1,8 +1,10 @@
 #include "web_server.h"
 #include "web_ui.h"
+#include "dash_assets.h"
 #include "config.h"
 #include "log_buffer.h"
 #include "mqtt_handler.h"
+#include "telegram.h"
 #include "status_led.h"
 #include "history.h"
 #include "history_flash.h"
@@ -33,6 +35,34 @@ static void handleIndex() {
   g_webServer.send_P(200, "text/html", INDEX_HTML);
 }
 
+// Дашборд (/dash) -- вбудований у прошивку через src/dash_assets.h (генерується
+// tools/gen_dash.py з dash/*). Той самий Basic Auth, що й у решти інтерфейсу.
+// Chart.js віддаємо стисненим (gzip), версія зафіксована -- можна кешувати.
+static void handleDashIndex() {
+  if (!checkAuth()) return;
+  g_webServer.sendHeader("Cache-Control", "no-cache");
+  g_webServer.send_P(200, "text/html; charset=utf-8", DASH_INDEX_HTML);
+}
+
+static void handleDashApp() {
+  if (!checkAuth()) return;
+  g_webServer.sendHeader("Cache-Control", "no-cache");
+  g_webServer.send_P(200, "application/javascript; charset=utf-8", DASH_APP_JS);
+}
+
+static void handleDashStyle() {
+  if (!checkAuth()) return;
+  g_webServer.sendHeader("Cache-Control", "no-cache");
+  g_webServer.send_P(200, "text/css; charset=utf-8", DASH_STYLE_CSS);
+}
+
+static void handleDashChart() {
+  if (!checkAuth()) return;
+  g_webServer.sendHeader("Content-Encoding", "gzip");
+  g_webServer.sendHeader("Cache-Control", "public, max-age=86400");
+  g_webServer.send_P(200, "application/javascript", (PGM_P)DASH_CHART_JS_GZ, DASH_CHART_JS_GZ_LEN);
+}
+
 static void handleGetConfig() {
   if (!checkAuth()) return;
   g_webServer.send(200, "application/json", configToJson());
@@ -48,17 +78,20 @@ static void handlePostConfig() {
   // configFromJson().
   modbusTaskPause();
   mqttTaskPause();
+  telegramTaskPause();
 
   String err;
   if (!configFromJson(body, err)) {
     modbusTaskResume(); // конфиг не менялся -- можно продолжать как ни в чём не бывало
     mqttTaskResume();
+    telegramTaskResume();
     g_webServer.send(400, "text/plain", err);
     return;
   }
   if (!configSave()) {
     modbusTaskResume();
     mqttTaskResume();
+    telegramTaskResume();
     g_webServer.send(500, "text/plain", "failed to save config to flash");
     return;
   }
@@ -98,6 +131,8 @@ static void handleGetStatus() {
   doc["mqtt_state"] = mqttStateCode();
   doc["mqtt_fail_count"] = mqttFailCount();
   doc["wifi_ok"] = (WiFi.status() == WL_CONNECTED);
+  doc["telegram_state"] = telegramStateCode();
+  doc["telegram_error"] = telegramLastError();
   doc["auto_mode"]["enabled"] = g_config.auto_mode_enabled;
   doc["auto_mode"]["pv_high"] = g_config.auto_mode_pv_high;
   doc["auto_mode"]["pv_low"] = g_config.auto_mode_pv_low;
@@ -111,6 +146,18 @@ static void handleGetStatus() {
   String out;
   serializeJson(doc, out);
   g_webServer.send(200, "application/json", out);
+}
+
+// Тестове повідомлення в Telegram -- ставить його в чергу задачі Telegram
+// (відправляється за кілька секунд; результат видно в /api/status).
+static void handlePostTelegramTest() {
+  if (!checkAuth()) return;
+  String err;
+  if (!telegramSendTest(err)) {
+    g_webServer.send(400, "text/plain", err);
+    return;
+  }
+  g_webServer.send(200, "text/plain", "OK -- повідомлення поставлено в чергу");
 }
 
 static void handlePostModbusWrite() {
@@ -207,6 +254,11 @@ static void handleGetHistory() {
 
 void webServerSetup() {
   g_webServer.on("/", HTTP_GET, handleIndex);
+  g_webServer.on("/dash", HTTP_GET, handleDashIndex);
+  g_webServer.on("/dash/", HTTP_GET, handleDashIndex);
+  g_webServer.on("/dash/app.js", HTTP_GET, handleDashApp);
+  g_webServer.on("/dash/style.css", HTTP_GET, handleDashStyle);
+  g_webServer.on("/dash/chart.js", HTTP_GET, handleDashChart);
   g_webServer.on("/api/config", HTTP_GET, handleGetConfig);
   g_webServer.on("/api/config", HTTP_POST, handlePostConfig);
   g_webServer.on("/api/logs", HTTP_GET, handleGetLogs);
@@ -216,6 +268,7 @@ void webServerSetup() {
   g_webServer.on("/api/version", HTTP_GET, handleGetVersion);
   g_webServer.on("/api/status", HTTP_GET, handleGetStatus);
   g_webServer.on("/api/modbus/write", HTTP_POST, handlePostModbusWrite);
+  g_webServer.on("/api/telegram/test", HTTP_POST, handlePostTelegramTest);
 
   // logInit() уже вызван в main.cpp::setup() до logInstallEspLogCapture() --
   // повторный вызов здесь стёр бы уже накопленные ранние логи загрузки.
